@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Life Rating</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Life Rating</h1>
+      <p class="lede">Pick photos from your gallery or a Google Takeout export. A CLIP model running in this browser tags each one;
+        nothing is uploaded. Ratings are Elo-scaled (1500 = reference median, ±95% interval). Click any score to break it down.</p>
+    </header>
+
+    <section id="drop" class="drop">
+      <label class="btn primary">Choose photos<input id="files" type="file" multiple accept="image/*,.heic,.heif,.json" hidden></label>
+      <label class="btn">Choose folder<input id="folder" type="file" webkitdirectory multiple hidden></label>
+      <button id="demo" class="btn ghost" type="button">Try synthetic data</button>
+      <span class="hint">or drop images here · Takeout <code>.json</code> sidecars are used for dates and GPS</span>
+    </section>
+
+    <section id="status" class="status" hidden>
+      <span class="msg"></span>
+      <progress max="1"></progress>
+    </section>
+
+    <section id="results"></section>
+
+    <footer>
+      v0 · scores measure what you photographed, not what you did. Norms are placeholders, not fitted to a real population.
+      Missing categories sit at 1500 with wide intervals instead of counting as zero.
+    </footer>
+  </main>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
