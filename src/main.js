@@ -3,6 +3,8 @@ import { TREE, buildContext } from './tree.js';
 import { ingest } from './ingest.js';
 import { loadClassifier, classify } from './classify.js';
 import { demoPhotos } from './demo.js';
+import { isConfigured, preloadSignIn, importFromGooglePhotos } from './gphotos.js';
+import { prepareImport } from './archives.js';
 
 const $ = (s) => document.querySelector(s);
 const status = $('#status');
@@ -16,11 +18,18 @@ function setStatus(text, frac) {
   if (frac == null) bar.removeAttribute('value'); else bar.value = frac;
 }
 
-async function run(fileList) {
+async function run(fileList, ingestOpts) {
   results.innerHTML = '';
   try {
+    if (!ingestOpts) {
+      // Unpacks zips and recognizes Instagram / X exports; other files pass through.
+      const prepared = await prepareImport(fileList, (msg, frac) => setStatus(msg, frac));
+      if (prepared.kind) setStatus(`Found ${prepared.files.length} photos in your ${prepared.kind === 'x' ? 'X' : 'Instagram'} export`);
+      fileList = prepared.files;
+      ingestOpts = prepared;
+    }
     setStatus('Reading metadata…', 0);
-    const photos = await ingest(fileList, (i, n) => setStatus(`Reading metadata ${i}/${n}`, i / n));
+    const photos = await ingest(fileList, (i, n) => setStatus(`Reading metadata ${i}/${n}`, i / n), ingestOpts);
     if (!photos.length) { setStatus('No images found in that selection.'); return; }
 
     setStatus('Loading CLIP model (first run downloads ≈90 MB)…');
@@ -159,6 +168,39 @@ for (const id of ['#files', '#folder']) {
   $(id).addEventListener('change', (e) => { if (e.target.files.length) run(e.target.files); e.target.value = ''; });
 }
 $('#demo').addEventListener('click', () => { setStatus(null); render(demoPhotos()); });
+
+// Google Photos: hidden until a client ID is set in config.js.
+const gpBtn = $('#gphotos');
+const pickerLink = $('#picker-link');
+if (isConfigured()) {
+  gpBtn.hidden = false;
+  preloadSignIn();
+  gpBtn.addEventListener('click', async () => {
+    gpBtn.disabled = true;
+    results.innerHTML = '';
+    try {
+      const { files, meta, failed } = await importFromGooglePhotos({
+        openPicker: (url) => {
+          pickerLink.href = url;
+          // Popups opened after sign-in may be blocked; the link is the fallback.
+          pickerLink.hidden = Boolean(window.open(url, 'gphotos-picker', 'popup,width=1000,height=760'));
+        },
+        onStatus: (msg) => setStatus(msg),
+        onProgress: (i, n) => { pickerLink.hidden = true; setStatus(`Downloading from Google Photos ${i}/${n}`, i / n); },
+      });
+      pickerLink.hidden = true;
+      if (failed) console.warn(`${failed} Google Photos item(s) could not be downloaded`);
+      if (!files.length) { setStatus('No photos were picked.'); return; }
+      await run(files, { extraMeta: meta, metaSource: 'google photos' });
+    } catch (e) {
+      pickerLink.hidden = true;
+      console.error(e);
+      setStatus(`Google Photos import failed: ${e.message}`);
+    } finally {
+      gpBtn.disabled = false;
+    }
+  });
+}
 
 const drop = $('#drop');
 drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });

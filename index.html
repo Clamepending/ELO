@@ -10,15 +10,18 @@
   <main>
     <header>
       <h1>Life Rating</h1>
-      <p class="lede">Pick photos from your gallery or a Google Takeout export. A CLIP model running in this browser tags each one;
+      <p class="lede">Pick photos from your gallery, Google Photos, or a Google Takeout, Instagram or X export. A CLIP model running in this browser tags each one;
         nothing is uploaded. Ratings are Elo-scaled (1500 = reference median, ±95% interval). Click any score to break it down.</p>
     </header>
 
     <section id="drop" class="drop">
-      <label class="btn primary">Choose photos<input id="files" type="file" multiple accept="image/*,.heic,.heif,.json" hidden></label>
+      <label class="btn primary">Choose photos<input id="files" type="file" multiple accept="image/*,.heic,.heif,.json,.zip" hidden></label>
       <label class="btn">Choose folder<input id="folder" type="file" webkitdirectory multiple hidden></label>
+      <button id="gphotos" class="btn" type="button" hidden>Import from Google Photos</button>
       <button id="demo" class="btn ghost" type="button">Try synthetic data</button>
-      <span class="hint">or drop images here · Takeout <code>.json</code> sidecars are used for dates and GPS</span>
+      <a id="picker-link" class="btn primary" target="_blank" rel="noopener" hidden>Open Google Photos picker</a>
+      <span class="hint">or drop images here · Takeout <code>.json</code> sidecars are used for dates and GPS · Google Photos imports have no location (Google strips it) and are relayed through this site without being stored</span>
+      <span class="hint">Instagram: Accounts Center → Your information and permissions → Download your information → JSON format. X: Settings → Your account → Download an archive. Choose the downloaded <code>.zip</code> (or its unzipped folder); only your own posts and stories are used, never messages.</span>
     </section>
 
     <section id="status" class="status" hidden>

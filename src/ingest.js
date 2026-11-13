@@ -45,10 +45,13 @@ async function makeThumb(file) {
   }
 }
 
-export async function ingest(fileList, onProgress) {
+// `extraMeta` (filename → { date, lat, lon }) lets other connectors such as
+// Google Photos supply sidecar-style metadata; Takeout sidecars take priority.
+export async function ingest(fileList, onProgress, { extraMeta = null, metaSource = 'takeout' } = {}) {
   const files = [...fileList];
   const exifr = await getExifr();
   const sidecars = await readSidecars(files);
+  for (const [name, m] of extraMeta ?? []) if (!sidecars.has(name)) sidecars.set(name, m);
   const images = files.filter((f) => IMAGE_RE.test(f.name));
   const photos = [];
   for (let i = 0; i < images.length; i++) {
@@ -58,13 +61,14 @@ export async function ingest(fileList, onProgress) {
     try { exif = await exifr.parse(f, { gps: true, pick: ['DateTimeOriginal', 'CreateDate', 'Make', 'Model', 'GPSLatitude', 'GPSLatitudeRef', 'GPSLongitude', 'GPSLongitudeRef'] }); } catch { /* none */ }
     const side = sidecars.get(f.name);
     // EXIF DateTimeOriginal is local wall-clock time, which is what hour-of-day
-    // analysis wants. Takeout timestamps are UTC (shown in this browser's zone).
-    // File mtime is the weakest fallback and is often the download time.
+    // analysis wants. Takeout and Google Photos timestamps are UTC (shown in
+    // this browser's zone). File mtime is the weakest fallback and is often the
+    // download time.
     const date = exif?.DateTimeOriginal ?? exif?.CreateDate ?? side?.date ?? (f.lastModified ? new Date(f.lastModified) : null);
-    const dateSource = exif?.DateTimeOriginal || exif?.CreateDate ? 'exif' : side?.date ? 'takeout' : 'file mtime';
+    const dateSource = exif?.DateTimeOriginal || exif?.CreateDate ? 'exif' : side?.date ? side.source ?? metaSource : 'file mtime';
     photos.push({
       id: `p${i}`,
-      name: f.webkitRelativePath || f.name,
+      name: f.archivePath || f.webkitRelativePath || f.name,
       date: date instanceof Date && !isNaN(date) ? date : null,
       dateSource,
       lat: Number.isFinite(exif?.latitude) ? exif.latitude : side?.lat ?? null,
