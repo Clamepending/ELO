@@ -1,0 +1,11 @@
+.git
+.wrangler
+node_modules
+test
+wrangler.jsonc
+.assetsignore
+.gitignore
+.nojekyll
+CNAME
+package.json
+README.md
