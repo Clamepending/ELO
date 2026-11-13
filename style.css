@@ -114,3 +114,7 @@ footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
   .kids { padding-left: 10px; }
   .info, .evidence { padding-left: 24px; }
 }
+
+.events { list-style: none; margin: 0; padding: 0; flex-basis: 100%; font-size: 13px; color: var(--muted); }
+.events li { padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.events li.more { font-style: italic; }

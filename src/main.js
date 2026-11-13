@@ -2,14 +2,20 @@ import { scoreTree, describe } from './scoring.js';
 import { TREE, buildContext } from './tree.js';
 import { ingest } from './ingest.js';
 import { loadClassifier, classify } from './classify.js';
-import { demoPhotos } from './demo.js';
-import { isConfigured, preloadSignIn, importFromGooglePhotos } from './gphotos.js';
+import { demoPhotos, demoEvents } from './demo.js';
+import { isConfigured, preloadSignIn } from './google.js';
+import { importFromGooglePhotos } from './gphotos.js';
 import { prepareImport } from './archives.js';
+import { parseIcs, importGoogleCalendar } from './calendar.js';
 
 const $ = (s) => document.querySelector(s);
 const status = $('#status');
 const results = $('#results');
 let photosById = new Map();
+let eventsById = new Map();
+// Photos and calendar are imported separately; each import replaces only its own source.
+let currentPhotos = [];
+let currentEvents = [];
 
 function setStatus(text, frac) {
   status.hidden = !text;
@@ -19,8 +25,21 @@ function setStatus(text, frac) {
 }
 
 async function run(fileList, ingestOpts) {
-  results.innerHTML = '';
+  // Split out calendar files before the first await (the caller resets the
+  // <input>, which empties its live FileList).
+  const all = [...fileList];
+  const icsFiles = all.filter((f) => /\.ics$/i.test(f.name));
+  fileList = all.filter((f) => !/\.ics$/i.test(f.name));
   try {
+    if (icsFiles.length) {
+      setStatus('Reading calendar…');
+      const events = [];
+      for (const [i, f] of icsFiles.entries()) events.push(...parseIcs(await f.text(), { idPrefix: `i${i}_` }));
+      currentEvents = events;
+      setStatus(null);
+      if (!fileList.length) { render(currentPhotos); return; }
+    }
+    results.innerHTML = '';
     if (!ingestOpts) {
       // Unpacks zips and recognizes Instagram / X exports; other files pass through.
       const prepared = await prepareImport(fileList, (msg, frac) => setStatus(msg, frac));
@@ -51,6 +70,7 @@ async function run(fileList, ingestOpts) {
     } else {
       setStatus('The AI model could not load here, so only Exploration and Rhythm are scored from dates and GPS. Run the app locally (see README) for the full categories.', 1);
     }
+    currentPhotos = photos;
     render(photos);
   } catch (e) {
     console.error(e);
@@ -60,11 +80,25 @@ async function run(fileList, ingestOpts) {
 
 // ---- rendering --------------------------------------------------------------
 
-function render(photos) {
+function render(photos, events = currentEvents) {
   photosById = new Map(photos.map((p) => [p.id, p]));
-  const scored = scoreTree(TREE, buildContext(photos));
+  eventsById = new Map(events.map((e) => [e.id, e]));
+  const scored = scoreTree(TREE, buildContext(photos, events));
   results.innerHTML = '';
-  results.append(summary(photos), nodeEl(scored, 0));
+  results.append(summary(photos));
+  if (events.length) results.append(calendarSummary(events));
+  results.append(nodeEl(scored, 0));
+}
+
+function calendarSummary(events) {
+  const counts = {};
+  for (const e of events) counts[e.cat] = (counts[e.cat] ?? 0) + 1;
+  const span = `${fmtDate(new Date(Math.min(...events.map((e) => e.start))))} – ${fmtDate(new Date(Math.max(...events.map((e) => e.start))))}`;
+  const el = document.createElement('div');
+  el.className = 'summary';
+  el.innerHTML = `<span><b>${events.length}</b> calendar events · ${span}</span><span class="chips">${
+    Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span class="chip">${k} ${v}</span>`).join('')}</span>`;
+  return el;
 }
 
 function summary(photos) {
@@ -143,6 +177,8 @@ function evidenceEl(ids) {
   const el = document.createElement('div');
   el.className = 'evidence';
   const ps = ids.map((id) => photosById.get(id)).filter(Boolean);
+  const es = ids.map((id) => eventsById.get(id)).filter(Boolean);
+  if (es.length) el.append(eventListEl(es));
   if (!ps.length) return el;
   const MAX = 36;
   for (const p of ps.slice(0, MAX)) {
@@ -162,19 +198,61 @@ function evidenceEl(ids) {
   return el;
 }
 
+// Calendar evidence: most recent first. Titles come from the user's own
+// calendar, so they're set as text, never as HTML.
+function eventListEl(es) {
+  const MAX = 25;
+  const list = document.createElement('ul');
+  list.className = 'events';
+  for (const e of [...es].sort((a, b) => b.start - a.start).slice(0, MAX)) {
+    const li = document.createElement('li');
+    const when = e.allDay ? e.start.toLocaleDateString() : e.start.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    li.textContent = `${when} · ${e.title}${e.sub ? ` (${e.sub})` : ''}`;
+    list.append(li);
+  }
+  if (es.length > MAX) {
+    const li = document.createElement('li');
+    li.className = 'more';
+    li.textContent = `+${es.length - MAX} more`;
+    list.append(li);
+  }
+  return list;
+}
+
 // ---- wiring -----------------------------------------------------------------
 
 for (const id of ['#files', '#folder']) {
   $(id).addEventListener('change', (e) => { if (e.target.files.length) run(e.target.files); e.target.value = ''; });
 }
-$('#demo').addEventListener('click', () => { setStatus(null); render(demoPhotos()); });
+$('#demo').addEventListener('click', () => {
+  setStatus(null);
+  currentPhotos = demoPhotos();
+  currentEvents = demoEvents();
+  render(currentPhotos);
+});
 
 // Google Photos: hidden until a client ID is set in config.js.
 const gpBtn = $('#gphotos');
 const pickerLink = $('#picker-link');
+const calBtn = $('#gcal');
 if (isConfigured()) {
-  gpBtn.hidden = false;
   preloadSignIn();
+  calBtn.hidden = false;
+  calBtn.addEventListener('click', async () => {
+    calBtn.disabled = true;
+    try {
+      setStatus('Connecting to Google Calendar…');
+      currentEvents = await importGoogleCalendar((msg) => setStatus(msg));
+      setStatus(currentEvents.length ? null : 'No past events found in calendars you own.');
+      render(currentPhotos);
+    } catch (e) {
+      console.error(e);
+      setStatus(`Google Calendar import failed: ${e.message}`);
+    } finally {
+      calBtn.disabled = false;
+    }
+  });
+  gpBtn.hidden = false;
   gpBtn.addEventListener('click', async () => {
     gpBtn.disabled = true;
     results.innerHTML = '';

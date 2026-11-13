@@ -8,7 +8,10 @@ npm start        # = python3 -m http.server 8000, then open http://localhost:800
 npm test         # node --test, scoring math + tree on synthetic data
 ```
 
-There is no build step and no backend. Photos never leave the browser: a CLIP model
+Deploy with `npx wrangler@4 deploy` (Node ≥ 22.12); it serves https://elo.vibe-research.net.
+
+There is no build step and no backend beyond a stateless Worker route that relays Google Photos
+downloads (Google's media URLs block browser CORS). Photos are never stored server-side: a CLIP model
 (`Xenova/clip-vit-base-patch32` via transformers.js, ≈90 MB, downloaded once and cached) tags each
 photo zero-shot. "Try synthetic data" explores the UI without photos or the model.
 
@@ -17,8 +20,13 @@ photo zero-shot. "Try synthetic data" explores the UI without photos or the mode
 | File | Role |
 |---|---|
 | `src/ingest.js` | Connector: files → photo records (EXIF date/GPS, Takeout `.json` sidecars, thumbnails) |
+| `src/archives.js` | Connector: Instagram / X export (.zip or folder) → images + post dates |
+| `src/gphotos.js` | Connector: Google Photos Picker API (downloads via the Worker's `/api/gphoto`) |
+| `src/calendar.js` | Connector: Google Calendar / `.ics` → event records, keyword-classified |
+| `src/google.js`, `src/config.js` | Google sign-in and the public OAuth client ID |
+| `worker/index.js` | Cloudflare Worker: serves the site, plus the Google Photos download pass-through |
 | `src/classify.js` | CLIP zero-shot prompts → `{cat, sub, conf}` per photo |
-| `src/tree.js` | The score tree: leaves read photo records, never files |
+| `src/tree.js` | The score tree: leaves read photo and event records, never files |
 | `src/scoring.js` | Node contract + math (pure, no DOM) |
 | `src/main.js` | UI |
 

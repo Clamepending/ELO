@@ -1,8 +1,10 @@
-// The v0 score tree. Leaves read normalized photo records, never raw files,
-// so new connectors only need to emit the same record shape.
+// The v0 score tree. Leaves read normalized records, never raw files, so new
+// connectors only need to emit the same record shapes.
 //
 // photo record: { id, name, date: Date|null, lat: number|null, lon: number|null,
 //                 cat: string, sub: string|null, conf: number, thumb: string|null }
+// event record: { id, title, start: Date, end: Date, allDay, location, source,
+//                 cat: string, sub: string|null }   (see calendar.js)
 //
 // NOTE: every `norm` below is a hand-set placeholder, not fitted to any real
 // population (ATUS, NHANES, ...). Replace them once there is reference data.
@@ -12,7 +14,7 @@ const dayIndex = (d) => Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.get
 export const weekKey = (d) => Math.floor((dayIndex(d) + 3) / 7); // Monday-start weeks
 const monthKey = (d) => d.getFullYear() * 12 + d.getMonth();
 
-export function buildContext(photos) {
+export function buildContext(photos, events = []) {
   const dated = photos.filter((p) => p.date instanceof Date && !isNaN(p.date));
   // Category leaves only count weeks with AI-classified photos: an unclassified
   // photo (model unavailable, HEIC outside Safari) is unknown, not "no cooking".
@@ -20,7 +22,16 @@ export function buildContext(photos) {
   const activeWeeks = new Set(classified.map((p) => weekKey(p.date)));
   const byCat = {};
   for (const p of classified) (byCat[p.cat] ??= []).push(p);
-  return { photos, dated, activeWeeks, byCat };
+
+  // Calendar weeks/months count as active if they hold any timed event at all,
+  // so a gap in calendar use is missing data, not a week of doing nothing.
+  const evs = events.filter((e) => e.start instanceof Date && !isNaN(e.start));
+  const timed = evs.filter((e) => !e.allDay);
+  const calWeeks = new Set(timed.map((e) => weekKey(e.start)));
+  const calMonths = new Set(timed.map((e) => monthKey(e.start)));
+  const eventsByCat = {};
+  for (const e of evs) (eventsByCat[e.cat] ??= []).push(e);
+  return { photos, dated, activeWeeks, byCat, events: evs, calWeeks, calMonths, eventsByCat };
 }
 
 const fmt = (x, d = 2) => (Number.isInteger(x) ? String(x) : x.toFixed(d));
@@ -87,6 +98,73 @@ function variety(cat, noun, median) {
   };
 }
 
+// ---- calendar leaf builders --------------------------------------------------
+
+function calFrequency(cat, noun, median) {
+  return {
+    id: `${cat}.calendar.frequency`,
+    name: 'Frequency',
+    desc: `${noun} events per active calendar week (a week with any timed event). Only past events you didn't decline.`,
+    norm: { transform: 'log', median, sigma: 1.2, higherIsBetter: true },
+    kappa: 6,
+    compute(ctx) {
+      const W = ctx.calWeeks.size;
+      if (!W) return null;
+      const es = (ctx.eventsByCat[cat] ?? []).filter((e) => !e.allDay);
+      return {
+        value: es.length / W, n: W, evidence: es.map((e) => e.id),
+        detail: `${fmt(es.length / W)} per active week (${es.length} events over ${W} active calendar weeks)`,
+      };
+    },
+  };
+}
+
+function calConsistency(cat, noun, median) {
+  return {
+    id: `${cat}.calendar.consistency`,
+    name: 'Consistency',
+    desc: `Share of active calendar weeks with at least one ${noun.toLowerCase()} event.`,
+    norm: { transform: 'logit', median, sigma: 1.0, higherIsBetter: true },
+    kappa: 6,
+    compute(ctx) {
+      const W = ctx.calWeeks.size;
+      if (!W) return null;
+      const es = (ctx.eventsByCat[cat] ?? []).filter((e) => !e.allDay);
+      const weeks = new Set(es.map((e) => weekKey(e.start)));
+      return {
+        value: weeks.size / W, n: W, evidence: es.map((e) => e.id),
+        detail: `${weeks.size} of ${W} active calendar weeks (${Math.round((100 * weeks.size) / W)}%)`,
+      };
+    },
+  };
+}
+
+// A category with two evidence sources. Each source is its own sub-composite,
+// so a missing source sits at the prior instead of being renormalized away.
+// rho 0.5: photos and calendar measure the same behavior through different,
+// partly independent filters (placeholder).
+function twoSource(id, name, desc, photoLeaves, calLeaves) {
+  return {
+    id, name, desc, rho: 0.5,
+    children: [
+      { id: `${id}.photos`, name: 'From photos', desc: 'AI-tagged photos.', rho: 0.6, children: photoLeaves },
+      { id: `${id}.calendar`, name: 'From calendar', desc: 'Calendar events sorted by title keywords. Missing if no calendar is connected.', rho: 0.6, children: calLeaves },
+    ],
+  };
+}
+
+// Consecutive travel events within 3 days of each other are one trip.
+function trips(events) {
+  const ts = events.filter((e) => e.cat === 'travel').sort((a, b) => a.start - b.start);
+  const out = [];
+  for (const e of ts) {
+    const last = out[out.length - 1];
+    if (last && e.start - last.end <= 3 * DAY) { last.events.push(e); if (e.end > last.end) last.end = e.end; }
+    else out.push({ start: e.start, end: e.end, events: [e] });
+  }
+  return out;
+}
+
 // ---- geo helpers ------------------------------------------------------------
 
 const cell = (p) => `${p.lat.toFixed(2)},${p.lon.toFixed(2)}`; // ≈1 km grid
@@ -111,23 +189,17 @@ export const TREE = {
       rho: 0.6,
       children: [frequency('cooking', 'Home-cooked food', 0.3), consistency('cooking', 'Cooking', 0.15), variety('cooking', 'Dish', 3)],
     },
+    twoSource('fitness', 'Fitness', 'Exercise and sport, from workout photos and fitness-app screenshots, and from workouts on your calendar.',
+      [frequency('fitness', 'Workout', 0.25), consistency('fitness', 'Workout', 0.12), variety('fitness', 'Activity', 2)],
+      [calFrequency('fitness', 'Workout', 1.0), calConsistency('fitness', 'Workout', 0.35)]),
+    twoSource('social', 'Social', 'Time with people: group photos (biased toward people whose friends like photos) and social plans on your calendar.',
+      [frequency('social', 'Group', 0.6), consistency('social', 'Group', 0.3), variety('social', 'Occasion', 2.5)],
+      [calFrequency('social', 'Social', 1.0), calConsistency('social', 'Social', 0.5)]),
+    twoSource('learning', 'Learning', 'Notes, whiteboards, books and code in photos; classes, study sessions and workshops on your calendar.',
+      [frequency('learning', 'Study', 0.2), consistency('learning', 'Study', 0.1)],
+      [calFrequency('learning', 'Learning', 1.0), calConsistency('learning', 'Learning', 0.3)]),
     {
-      id: 'fitness', name: 'Fitness', desc: 'Exercise and sport, inferred from workout photos and fitness-app screenshots.',
-      rho: 0.6,
-      children: [frequency('fitness', 'Workout', 0.25), consistency('fitness', 'Workout', 0.12), variety('fitness', 'Activity', 2)],
-    },
-    {
-      id: 'social', name: 'Social', desc: 'Photos with groups of people. Strongly biased toward people whose friends like photos.',
-      rho: 0.6,
-      children: [frequency('social', 'Group', 0.6), consistency('social', 'Group', 0.3), variety('social', 'Occasion', 2.5)],
-    },
-    {
-      id: 'learning', name: 'Learning', desc: 'Notes, whiteboards, books, code, classes.',
-      rho: 0.6,
-      children: [frequency('learning', 'Study', 0.2), consistency('learning', 'Study', 0.1)],
-    },
-    {
-      id: 'exploration', name: 'Exploration', desc: 'From photo GPS. Missing if your export has no location data.',
+      id: 'exploration', name: 'Exploration', desc: 'Places from photo GPS, and trips from your calendar. Each part is missing without its source.',
       rho: 0.4,
       children: [
         {
@@ -160,6 +232,19 @@ export const TREE = {
             const p90 = d[Math.min(d.length - 1, Math.floor(0.9 * d.length))];
             const far = ps.filter((p) => haversineKm({ lat, lon }, p) >= p90).map((p) => p.id);
             return { value: p90, n: ps.length, evidence: far, detail: `${fmt(p90, 0)} km (from ${ps.length} GPS-tagged photos)` };
+          },
+        },
+        {
+          id: 'exploration.trips', name: 'Trips',
+          desc: 'Trips per active calendar month: flights, hotels and trips on your calendar, with events within 3 days of each other merged into one trip.',
+          norm: { transform: 'log', median: 0.25, sigma: 1.0, higherIsBetter: true },
+          kappa: 6,
+          compute(ctx) {
+            const M = ctx.calMonths.size;
+            if (!M) return null;
+            const ts = trips(ctx.events);
+            return { value: ts.length / M, n: M, evidence: ts.flatMap((t) => t.events.map((e) => e.id)),
+              detail: `${fmt(ts.length / M)} per month (${ts.length} trips over ${M} active calendar months)` };
           },
         },
       ],

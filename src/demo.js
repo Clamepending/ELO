@@ -1,3 +1,5 @@
+import { classifyEvent } from './calendar.js';
+
 // Synthetic gallery so the score tree can be explored without real photos.
 // Records have the same shape the photo connector emits, minus thumbnails.
 
@@ -43,4 +45,34 @@ export function demoPhotos(seed = 7) {
     }
   }
   return photos;
+}
+
+// Synthetic calendar for the same fictional year, classified by the real rules.
+
+export function demoEvents(seed = 11) {
+  const r = rng(seed);
+  const events = [];
+  const start = new Date(2025, 10, 3); // same Monday as demoPhotos
+  const add = (title, day, hour, hours = 1, allDay = false) => {
+    const s = new Date(start.getTime() + day * 86400000);
+    if (allDay) s.setHours(0, 0, 0, 0); else s.setHours(hour, 0, 0, 0);
+    const e = new Date(s.getTime() + (allDay ? hours * 86400000 : hours * 3600000));
+    const days = Math.round((e - s) / 86400000);
+    events.push({ id: `de${events.length}`, title, start: s, end: e, allDay, location: null, source: 'synthetic', ...classifyEvent(title, { allDay, days }) });
+  };
+  for (let w = 0; w < 52; w++) {
+    if (r() < 0.08) continue; // weeks the calendar wasn't used
+    const d0 = w * 7;
+    add('Team standup', d0, 10, 0.5); add('Weekly sync', d0 + 2, 14);
+    if (r() < 0.6) add('Gym', d0 + 1, 7);
+    if (r() < 0.35) add('Morning run', d0 + 3, 7);
+    if (r() < 0.5) add(r() < 0.5 ? 'Dinner with Sam' : 'Drinks', d0 + 4, 19, 2);
+    if (r() < 0.15) add('Game night', d0 + 5, 20, 3);
+    if (w < 20) add('CS 189 lecture', d0 + 1, 12, 1.5);
+    if (r() < 0.2) add('Study session', d0 + 2, 18, 2);
+  }
+  add('Flight to NYC', 60, 8, 6); add('Hotel: Brooklyn', 60, 0, 4, true);
+  add('Trip to Tahoe', 200, 0, 3, true); add('Flight to Tokyo', 300, 9, 11);
+  add("Alex's birthday", 120, 0, 1, true);
+  return events;
 }

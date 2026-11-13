@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normCdf, standardize, posterior, combine, scoreTree, toElo, describe } from '../src/scoring.js';
 import { TREE, buildContext } from '../src/tree.js';
-import { demoPhotos } from '../src/demo.js';
+import { demoPhotos, demoEvents } from '../src/demo.js';
 
 const close = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
 
@@ -31,8 +31,8 @@ test('empty gallery -> everything at prior 1500, no data', () => {
   assert.equal(describe(s.score).elo, 1500);
   assert.equal(s.score.missing, true);
 });
-test('demo gallery scores every leaf', () => {
-  const s = scoreTree(TREE, buildContext(demoPhotos()));
+test('demo gallery + calendar scores every leaf', () => {
+  const s = scoreTree(TREE, buildContext(demoPhotos(), demoEvents()));
   const walk = (n) => (n.children ? n.children.flatMap(walk) : [n]);
   for (const leaf of walk(s)) {
     assert.equal(leaf.score.missing, false, leaf.id);
@@ -49,4 +49,21 @@ test('unclassified photos leave category leaves missing, not zero', () => {
   assert.equal(cooking.score.missing, true);
   assert.equal(describe(cooking.score).elo, 1500);
   assert.equal(s.children.find((c) => c.id === 'rhythm').score.missing, false);
+});
+
+test('photos only: calendar groups and trips are missing, photo groups scored', () => {
+  const s = scoreTree(TREE, buildContext(demoPhotos()));
+  const find = (n, id) => (n.id === id ? n : n.children?.map((c) => find(c, id)).find(Boolean));
+  assert.equal(find(s, 'fitness.calendar').score.missing, true);
+  assert.equal(find(s, 'exploration.trips').score.missing, true);
+  assert.equal(find(s, 'fitness.photos').score.missing, false);
+  assert.equal(describe(find(s, 'fitness.calendar').score).elo, 1500);
+});
+
+test('calendar only: calendar leaves scored without any photos', () => {
+  const s = scoreTree(TREE, buildContext([], demoEvents()));
+  const find = (n, id) => (n.id === id ? n : n.children?.map((c) => find(c, id)).find(Boolean));
+  assert.equal(find(s, 'fitness.calendar').score.missing, false);
+  assert.equal(find(s, 'fitness.photos').score.missing, true);
+  assert.equal(find(s, 'exploration.trips').score.missing, false);
 });

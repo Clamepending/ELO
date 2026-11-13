@@ -7,41 +7,11 @@
 // site's Worker (/api/gphoto), which forwards to *.googleusercontent.com only
 // and stores nothing.
 
-import { GOOGLE_CLIENT_ID } from './config.js';
+import { getToken } from './google.js';
 
 const SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
 const API = 'https://photospicker.googleapis.com/v1';
-const GIS_URL = 'https://accounts.google.com/gsi/client';
 const CONCURRENCY = 4;
-
-export const isConfigured = () => Boolean(GOOGLE_CLIENT_ID);
-
-let gisPromise = null;
-function loadGis() {
-  return (gisPromise ??= new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = GIS_URL;
-    s.onload = () => resolve(window.google.accounts.oauth2);
-    s.onerror = () => { gisPromise = null; reject(new Error('Could not load Google sign-in')); };
-    document.head.append(s);
-  }));
-}
-
-// Load the sign-in library at page load, so the click that requests a token
-// opens its popup synchronously and isn't blocked.
-export function preloadSignIn() { return loadGis().catch(() => {}); }
-
-function getToken() {
-  return loadGis().then((oauth2) => new Promise((resolve, reject) => {
-    const client = oauth2.initTokenClient({
-      client_id: GOOGLE_CLIENT_ID,
-      scope: SCOPE,
-      callback: (r) => (r.error ? reject(new Error(r.error_description || r.error)) : resolve(r.access_token)),
-      error_callback: (e) => reject(new Error(e.message || e.type || 'Sign-in cancelled')),
-    });
-    client.requestAccessToken();
-  }));
-}
 
 async function api(token, path, init = {}) {
   const r = await fetch(`${API}${path}`, {
@@ -98,7 +68,7 @@ async function download(token, item) {
 
 // Returns { files, meta } where meta maps filename → { date } for ingest().
 export async function importFromGooglePhotos({ openPicker, onStatus, onProgress }) {
-  const token = await getToken();
+  const token = await getToken(SCOPE);
   onStatus('Starting Google Photos picker…');
   const session = await api(token, '/sessions', { method: 'POST', body: '{}' });
   try {
