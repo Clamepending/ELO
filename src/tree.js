@@ -14,9 +14,12 @@ const monthKey = (d) => d.getFullYear() * 12 + d.getMonth();
 
 export function buildContext(photos) {
   const dated = photos.filter((p) => p.date instanceof Date && !isNaN(p.date));
-  const activeWeeks = new Set(dated.map((p) => weekKey(p.date)));
+  // Category leaves only count weeks with AI-classified photos: an unclassified
+  // photo (model unavailable, HEIC outside Safari) is unknown, not "no cooking".
+  const classified = dated.filter((p) => p.cat !== 'unclassified');
+  const activeWeeks = new Set(classified.map((p) => weekKey(p.date)));
   const byCat = {};
-  for (const p of dated) (byCat[p.cat] ??= []).push(p);
+  for (const p of classified) (byCat[p.cat] ??= []).push(p);
   return { photos, dated, activeWeeks, byCat };
 }
 
@@ -28,7 +31,7 @@ function frequency(cat, noun, median) {
   return {
     id: `${cat}.frequency`,
     name: 'Frequency',
-    desc: `${noun} photos per active week (a week with any photo at all). Weeks with no photos are treated as missing, not zero.`,
+    desc: `${noun} photos per active week (a week with any classified photo). Weeks with no photos are treated as missing, not zero.`,
     norm: { transform: 'log', median, sigma: 1.2, higherIsBetter: true },
     kappa: 6,
     compute(ctx) {

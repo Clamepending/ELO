@@ -24,15 +24,24 @@ async function run(fileList) {
     if (!photos.length) { setStatus('No images found in that selection.'); return; }
 
     setStatus('Loading CLIP model (first run downloads ≈90 MB)…');
-    const clf = await loadClassifier((p) => {
-      if (p.status === 'progress' && p.file?.endsWith('.onnx')) setStatus(`Downloading model ${Math.round(p.progress)}%`, p.progress / 100);
-    });
-    const todo = photos.filter((p) => p.thumb);
-    for (let i = 0; i < todo.length; i++) {
-      Object.assign(todo[i], await classify(clf, todo[i].thumb));
-      setStatus(`Classifying ${i + 1}/${todo.length}`, (i + 1) / todo.length);
+    let clf = null;
+    try {
+      clf = await loadClassifier((p) => {
+        if (p.status === 'progress' && p.file?.endsWith('.onnx')) setStatus(`Downloading model ${Math.round(p.progress)}%`, p.progress / 100);
+      });
+    } catch (e) {
+      console.warn('Classifier unavailable', e);
     }
-    setStatus(null);
+    if (clf) {
+      const todo = photos.filter((p) => p.thumb);
+      for (let i = 0; i < todo.length; i++) {
+        Object.assign(todo[i], await classify(clf, todo[i].thumb));
+        setStatus(`Classifying ${i + 1}/${todo.length}`, (i + 1) / todo.length);
+      }
+      setStatus(null);
+    } else {
+      setStatus('The AI model could not load here, so only Exploration and Rhythm are scored from dates and GPS. Run the app locally (see README) for the full categories.', 1);
+    }
     render(photos);
   } catch (e) {
     console.error(e);

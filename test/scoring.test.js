@@ -41,3 +41,12 @@ test('demo gallery scores every leaf', () => {
   console.log(walk(s).map((l) => `${l.id} ${describe(l.score).elo} ±${describe(l.score).ci95} | ${l.score.raw.detail}`).join('\n'));
   console.log('overall', describe(s.score));
 });
+
+test('unclassified photos leave category leaves missing, not zero', () => {
+  const photos = demoPhotos().map((p) => ({ ...p, cat: 'unclassified', sub: null }));
+  const s = scoreTree(TREE, buildContext(photos));
+  const cooking = s.children.find((c) => c.id === 'cooking');
+  assert.equal(cooking.score.missing, true);
+  assert.equal(describe(cooking.score).elo, 1500);
+  assert.equal(s.children.find((c) => c.id === 'rhythm').score.missing, false);
+});
